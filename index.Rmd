@@ -1,0 +1,130 @@
+### Introduction
+The goal of this project is to predict 'how (well)' the weight training activity was performed.  More information is available here: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har) 
+
+The data is from 6 participants performed weight lifting. Their performance were categorized into 5 levels: correct execution (A), incorrect execution in 5 different ways (B - E). I will report:
+
+* How I built my model
+* How I use cross validation
+* What I think the expected out of sample error
+* Why I made the choices I did
+
+***  
+
+### Summary
+
+##### 1. Load & Explore the raw data 
+```{}
+In the initial observation of the raw data, I found the following issues:
+1) missing values are expressed in different ways
+2) lots of variabls contain too many missing values
+3) 1st column is a row number, and column 2-6 are not informative predictors
+```
+
+##### 2. Preprocess the data
+```{}
+For identified issues, I preprocess the data in these ways:
+1) specify the missing data as "NA"
+2) investigate how much NAs exist in each colum and remove the columns which contains 98% or more NAs
+3) remove the 1st to 6th columns 
+```
+##### 3. Data Split: Training (sub-train/sub-test) vs. Testing
+```{}
+Split the training data set into sub-training (60%) and sub-testing (40%) data set to build the models.  
+This splitting makes the 2-levels of cross-validation avaiable. First one is to cross validate the model, which is fitted using the sub-training data, with the sub-testing data set.  Another level of cross-validation was to apply the final model, which is built using the training set, with the new (untouched) testing data.
+```
+
+##### 4. Building the prediction model with Training (sub-train/sub-test) data
+```{}
+Model 1) decision tree
+Model 2) random forest -- better accuracy
+```
+
+##### 5. Apply the model to Test data set
+```{}
+Cross-validate the final model with the original testing data set. 
+```
+
+***  
+
+### Programming
+
+##### 1. Load & Explore the raw data 
+```{r}
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl  <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "pml-training.csv"
+testFile <- "pml-testing.csv"
+if(!file.exists(trainFile) | !file.exists(testFile)){
+    train <- read.csv(url(trainUrl))
+    test  <- read.csv(url(testUrl))
+}              
+```
+##### 2. Preprocess the data
+```{r}
+#Solution for Issue 1: specify the missing data as "NA"
+trainOrig <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testOrig  <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+```
+
+```{r}
+#Solution for Issue 2: investigate how much NAs exist in each colum
+numNAs <- colMeans(is.na(trainOrig))
+table(round(numNAs,2))
+```
+Out of 159 predictive variables, 100 (94+6) variables contains 98% or more missing values. So I will remove these predictive variables. 
+```{r}
+trainNA <- trainOrig[!numNAs > 0.7]
+```
+
+```{r}
+#Solution for Issue 3: remove the 1st colum, and 2nd to 6th columns
+training <- trainNA[c(-1)]
+training <- training[,-c(2:6)]
+dim(training)
+```
+
+##### 3. Data Split: Training into sub-train & sub-test for model building  
+
+The purpose of splitting the training data set into sub-training and sub-testing is to create a portion of the data (sub-testing) which I do not want to touch during model fitting.  I used only the sub-training data set for model building the, and then I performed the cross validation of the model with the untouched sub-testing data set. This process reduces the bias for the out-of-sample errors.  
+
+```{r}
+library(caret)
+set.seed(111)
+sub_index <- createDataPartition(training$classe, p=0.6, list = FALSE)
+sub_training <- training[sub_index,]
+sub_testing  <- training[-sub_index,]
+dim(sub_training);dim(sub_testing)
+```
+
+##### 4. Building the prediction model with Training (sub-train/sub-test) data
+**Model 1: decision tree**    
+
+I start model building with a decision tree because it is simple and easy to interpret.
+```{r}
+library(rpart)
+rpart_model <- rpart(classe ~ ., data=sub_training, method = 'class')
+rpart_pred  <- predict(rpart_model, newdata=sub_testing, type = 'class')
+confusionMatrix(rpart_pred, sub_testing$classe)
+```
+The accuracy, `r round(confusionMatrix(rpart_pred, sub_testing$classe)$overall['Accuracy'],4)*100`%, is fair. 
+
+**Model 2: random forest**  
+
+
+As a second model, I tried the random forest. Compared to the decision tree, the random forest algorism averages out the multiple trees which are constructed based on randomly selected features. For a model building process, the random forest is less sensitive to outliners. Therefore, the advantage of the random forest over the decision tree is overcoming the problem of overfitting (i.e., expected lesser out-of-sample error).
+```{r}
+library(ggplot2)
+library(randomForest)
+rf_model <- randomForest(classe ~., data=sub_training)
+rf_pred  <- predict(rf_model, newdata=sub_testing)
+confusionMatrix(rf_pred, sub_testing$classe)
+```
+As the second morel, I fit the model with a random forest algorithm. The accuracy (`r round(confusionMatrix(rf_pred, sub_testing$classe)$overall['Accuracy'],4)*100`%) was high (and higher than the Model 1 with the decision tree). So I decided to select the Model 2 as my final model.
+
+Since this accuracy of the final model was evaluated using the sub-testing data set which was not touched during model fitting. Therefore, `r (1 - (round(confusionMatrix(rf_pred, sub_testing$classe)$overall['Accuracy'],4)))*100`%  should be a good estimate of out-of-sample error. 
+
+##### 5. Apply the model to Test data set
+```{r}
+predict(rf_model, newdata=testOrig)
+
+```
